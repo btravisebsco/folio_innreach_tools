@@ -1,0 +1,13 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Orange squircle background -->
+  <rect x="4" y="4" width="120" height="120" rx="26" ry="26" fill="#E8691B"/>
+
+  <!-- Greater-than chevron lines — clipped to circle edges -->
+  <line x1="39.9" y1="33.2" x2="89.1" y2="58.8" stroke="white" stroke-width="5" stroke-linecap="round"/>
+  <line x1="89.1" y1="69.2" x2="39.9" y2="94.8" stroke="white" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- Hollow circles at the three points -->
+  <circle cx="30" cy="28" r="11.2" fill="#E8691B" stroke="white" stroke-width="4"/>
+  <circle cx="99" cy="64" r="11.2" fill="#E8691B" stroke="white" stroke-width="4"/>
+  <circle cx="30" cy="100" r="11.2" fill="#E8691B" stroke="white" stroke-width="4"/>
+</svg>
