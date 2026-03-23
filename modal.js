@@ -76,6 +76,13 @@
     '          <input type="text" id="single-lookup" class="full-width" placeholder="Tracking ID or Item barcode">' +
     "          <small>Print a slip for one specific transaction</small>" +
     "        </div>" +
+    '        <hr>' +
+    '        <div class="section">' +
+    '          <label>' +
+    '            <input type="checkbox" id="token-preview">' +
+    '            Debug tokens — show all token values on each slip' +
+    '          </label>' +
+    '        </div>' +
     '        <div class="btn-row">' +
     '          <button class="btn primary" id="btn-generate">Generate All Slips</button>' +
     '          <button class="btn" id="btn-single">Print Single Slip</button>' +
@@ -177,6 +184,8 @@
     btnSyncSelected: $("btn-sync-selected"),
     syncIds: $("sync-ids"),
     btnSyncManual: $("btn-sync-manual"),
+    // Debug tokens
+    tokenPreview: $("token-preview"),
     // Settings
     okapiUrl: $("okapi-url"),
     okapiTenant: $("okapi-tenant"),
@@ -255,6 +264,28 @@
       $("tab-" + target).classList.add("active");
     });
   });
+
+  // ======================== DEBUG TOKENS TOGGLE ========================
+
+  function buildTokenReferenceHTML(ctx) {
+    var rows = "";
+    function addRows(prefix, obj) {
+      Object.keys(obj).forEach(function (k) {
+        var fullKey = prefix + "." + k;
+        var val = obj[k];
+        var display = val != null && val !== "" ? String(val) : '<em style="color:#999;">(empty)</em>';
+        rows += "<tr><td style='padding:2px 8px;font-family:monospace;font-size:12px;white-space:nowrap;'>{{" + fullKey + "}}</td>" +
+          "<td style='padding:2px 8px;font-size:12px;'>" + display + "</td></tr>";
+      });
+    }
+    addRows("item", ctx.item || {});
+    addRows("innReachTransaction", ctx.innReachTransaction || {});
+    return '<table style="border-collapse:collapse;margin-top:12px;border:1px solid #ccc;width:100%;">' +
+      '<caption style="font-weight:bold;font-size:13px;padding:6px;text-align:left;background:#f0f0f0;">Available Tokens</caption>' +
+      '<thead><tr style="background:#e8e8e8;"><th style="padding:4px 8px;text-align:left;font-size:12px;">Token</th>' +
+      '<th style="padding:4px 8px;text-align:left;font-size:12px;">Value</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table>';
+  }
 
   // ======================== CLOSE MODAL ========================
 
@@ -829,10 +860,13 @@
       }
 
       setStatus("Rendering " + contextObjs.length + " slips…", "info");
+      var isPreview = els.tokenPreview.checked;
       var slips = contextObjs.map(function (ctx) {
+        var body = renderMustache(template, ctx);
+        if (isPreview) body += buildTokenReferenceHTML(ctx);
         return (
           '<div style="page-break-after: always;">' +
-          renderMustache(template, ctx) +
+          body +
           "</div>"
         );
       });
@@ -842,7 +876,7 @@
         slips.length +
         ")</title></head><body>" +
         slips.join("\n") +
-        '<script>window.onload=function(){window.print();}</' + 'script>' +
+        (isPreview ? '' : '<script>window.onload=function(){window.print();}</' + 'script>') +
         "</body></html>";
 
       var blob = new Blob([fullHTML], { type: "text/html" });
@@ -967,9 +1001,12 @@
       var template = templateData.template;
 
       var contextObj = buildSlipContext(match, item, agencyCodeMap, cachedPatronCodeMap, cachedLocalServerCode);
+      var isPreview = els.tokenPreview.checked;
+      var body = renderMustache(template, contextObj);
+      if (isPreview) body += buildTokenReferenceHTML(contextObj);
       var rendered =
         '<div style="page-break-after: always;">' +
-        renderMustache(template, contextObj) +
+        body +
         "</div>";
 
       var fullHTML =
@@ -977,7 +1014,7 @@
         escapeHtml(item.barcode || match.trackingId) +
         "</title></head><body>" +
         rendered +
-        '<script>window.onload=function(){window.print();}</' + 'script>' +
+        (isPreview ? '' : '<script>window.onload=function(){window.print();}</' + 'script>') +
         "</body></html>";
 
       var blob = new Blob([fullHTML], { type: "text/html" });
