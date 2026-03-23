@@ -38,7 +38,7 @@
   var cachedUserId = null;
   var cachedServicePointId = null;
   var cachedAgencyCodeMap = {};   // { centralServerId: { centralServerCode, agencies: {code: description} } }
-  var cachedPatronCodeMap = {};   // { centralServerId: { centralPatronType: description } }
+  var cachedPatronCodeMap = {};   // { centralServerCode: { centralPatronType: description } }
   var cachedLocalServerCode = "";
 
   // ======================== HTML MARKUP ========================
@@ -484,20 +484,26 @@
         console.warn("[InnReachTools] Agency code fetch error:", e.message);
       }
 
-      // Fetch patron type mappings
+      // Build server ID → code mapping
+      var serverIdToCode = {};
+      centralServers.forEach(function (cs) {
+        serverIdToCode[cs.id] = cs.centralServerCode || cs.id;
+      });
+
+      // Fetch patron type mappings (keyed by centralServerCode)
       try {
         var ptData = await folioGet("/inn-reach/central-servers/patron-types");
         var csPatronTypes = ptData.centralServerPatronTypes || [];
         cachedPatronCodeMap = {};
         csPatronTypes.forEach(function (cpt) {
-          var csId = cpt.centralServerId || "";
+          var csCode = serverIdToCode[cpt.centralServerId] || cpt.centralServerId || "";
           var map = {};
           (cpt.patronTypes || []).forEach(function (pt) {
             if (pt.centralPatronType != null && pt.description) {
               map[pt.centralPatronType] = pt.description;
             }
           });
-          cachedPatronCodeMap[csId] = map;
+          cachedPatronCodeMap[csCode] = map;
         });
       } catch (e) {
         console.warn("[InnReachTools] Patron type fetch error:", e.message);
@@ -607,9 +613,9 @@
 
     var hold = txn.hold || {};
     var pickupParts = (hold.pickupLocation || "").split(":");
-    var centralServerId = hold.centralServerId || "";
+    var centralServerCode = txn.centralServerCode || hold.centralServerCode || "";
     var transactionObj = {
-      centralServerCode: hold.centralServerCode || "",
+      centralServerCode: centralServerCode,
       localServerCode: localServerCode || "",
       pickupLocationPrintName: pickupParts.length > 2 ? pickupParts[2] : "",
       pickupLocationCode: pickupParts.length > 0 ? pickupParts[0] : "",
@@ -621,7 +627,7 @@
       patronName: hold.patronName || "",
       patronTypeCode: hold.centralPatronType || "",
       patronTypeDescription:
-        (patronCodeMap[centralServerId] || {})[hold.centralPatronType] || "",
+        (patronCodeMap[centralServerCode] || {})[hold.centralPatronType] || "",
     };
 
     return { item: itemObj, innReachTransaction: transactionObj };
