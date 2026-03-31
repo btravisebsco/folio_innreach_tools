@@ -648,9 +648,9 @@
     var transactionObj = {
       centralServerCode: centralServerCode,
       localServerCode: localServerCode || "",
-      pickupLocationPrintName: pickupParts.length > 2 ? pickupParts[2] : "",
+      pickupLocationPrintName: pickupParts.length > 1 ? pickupParts[1] : "",
       pickupLocationCode: pickupParts.length > 0 ? pickupParts[0] : "",
-      pickupLocationDeliveryStop: pickupParts.length > 3 ? pickupParts[3] : "",
+      pickupLocationDeliveryStop: pickupParts.length > 2 ? pickupParts[2] : "",
       patronAgencyCode: hold.patronAgencyCode || "",
       patronAgencyDescription: agencyCodeMap[hold.patronAgencyCode] || "",
       itemAgencyCode: hold.itemAgencyCode || "",
