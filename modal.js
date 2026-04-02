@@ -636,10 +636,20 @@
           : "",
       barcode: item.barcode || "",
       effectiveCallNumber: callParts.join(" ").trim(),
+      effectiveCallNumberComponents: {
+        prefix: ecnc.prefix == null ? "" : String(ecnc.prefix),
+        callNumber: ecnc.callNumber == null ? "" : String(ecnc.callNumber),
+        suffix: ecnc.suffix == null ? "" : String(ecnc.suffix),
+      },
       effectiveLocationFolioName:
         (item.effectiveLocation && item.effectiveLocation.name) || "",
       hrid: item.hrid || "",
       shelvingOrder: item.effectiveShelvingOrder || "",
+      volume: item.volume || "",
+      displaySummary: item.displaySummary || "",
+      enumeration: item.enumeration || "",
+      chronology: item.chronology || "",
+      copyNumber: item.copyNumber || "",
     };
 
     var hold = txn.hold || {};
