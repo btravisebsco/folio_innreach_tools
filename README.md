@@ -57,6 +57,20 @@ Select one or more rows in the table (or enter tracking IDs manually) and click 
 
 A confirmation dialog appears before any sync operation. Each row's status updates to show success (✓), skipped (—), or failed (✗).
 
+#### Final Check-in Sync
+
+Below the broken-hold scanner is a second section for detecting transactions that completed in FOLIO (loan closed) but never reached the FINAL_CHECKIN state in Inn-Reach.
+
+**Scanning** — Click **Scan for Missing Final Check-ins** to fetch all ITEM transactions in `ITEM_SHIPPED`, `ITEM_IN_TRANSIT`, `RETURN_UNCIRCULATED`, `RECALL`, `ITEM_RECEIVED`, or `RECEIVE_UNANNOUNCED` state and check whether the associated FOLIO loan is closed. Results appear in a table showing tracking ID, state, item ID, loan ID, and sync status.
+
+**Syncing** — Select rows in the table (or enter tracking IDs manually in the text field below) and click **Sync Selected** or **Sync**. The sync logic for each transaction:
+
+1. Verifies the transaction is in one of the valid states listed above and has a closed loan.
+2. If the transaction is in `RECALL` state, updates it to `ITEM_IN_TRANSIT` first (required workaround so the final check-in trigger fires).
+3. "Touches" the loan record — sets `userId` to the hold patron, PUTs the loan, then removes `userId` and PUTs again. This write triggers FOLIO's internal event pipeline, which advances the Inn-Reach transaction to FINAL_CHECKIN.
+
+A confirmation dialog appears before any sync operation. Each row's status updates to show success (✓ Synced), skipped (— Skipped), or failed (✗ Failed).
+
 ### Settings
 
 - **FOLIO API Gateway** — Auto-detected from the page. Override manually if needed.

@@ -126,6 +126,42 @@
     '            <button class="btn primary" id="btn-sync-manual">Sync</button>' +
     "          </div>" +
     "        </div>" +
+    "        <hr>" +
+    // ---- Final Check-in Section ----
+    '        <div class="section">' +
+    "          <p>Scan for ITEM_SHIPPED / ITEM_IN_TRANSIT / RETURN_UNCIRCULATED / RECALL / ITEM_RECEIVED / RECEIVE_UNANNOUNCED transactions with a closed loan.</p>" +
+    '          <div class="btn-row">' +
+    '            <button class="btn primary" id="btn-list-final-checkins">Scan for Missing Final Check-ins</button>' +
+    "          </div>" +
+    "        </div>" +
+    '        <div id="final-checkin-results" style="display:none;">' +
+    '          <div class="table-toolbar">' +
+    '            <span id="final-checkin-count"></span>' +
+    '            <button class="btn danger" id="btn-sync-final-selected" disabled>Sync Selected</button>' +
+    "          </div>" +
+    '          <div class="table-wrap">' +
+    '            <table id="final-checkin-table">' +
+    "              <thead><tr>" +
+    '                <th><input type="checkbox" id="select-all-final"></th>' +
+    "                <th>Tracking ID</th>" +
+    "                <th>State</th>" +
+    "                <th>Item ID</th>" +
+    "                <th>Loan ID</th>" +
+    "                <th>Sync</th>" +
+    "              </tr></thead>" +
+    '              <tbody id="final-checkin-tbody"></tbody>' +
+    "            </table>" +
+    "          </div>" +
+    "        </div>" +
+    "        <hr>" +
+    '        <div class="section">' +
+    '          <label for="final-checkin-ids" class="field-label">Final Check-in Sync by Tracking ID</label>' +
+    '          <input type="text" id="final-checkin-ids" class="full-width" placeholder="Tracking ID(s), comma-separated">' +
+    "          <small>Manually sync final check-in for specific transaction(s)</small>" +
+    '          <div class="btn-row">' +
+    '            <button class="btn primary" id="btn-final-checkin-manual">Sync</button>' +
+    "          </div>" +
+    "        </div>" +
     "      </div>" +
     // ---- Settings Tab ----
     '      <div class="tab-content" id="tab-settings">' +
@@ -184,6 +220,15 @@
     btnSyncSelected: $("btn-sync-selected"),
     syncIds: $("sync-ids"),
     btnSyncManual: $("btn-sync-manual"),
+    // Final Check-ins
+    btnListFinalCheckins: $("btn-list-final-checkins"),
+    finalCheckinResults: $("final-checkin-results"),
+    finalCheckinCount: $("final-checkin-count"),
+    finalCheckinTbody: $("final-checkin-tbody"),
+    selectAllFinal: $("select-all-final"),
+    btnSyncFinalSelected: $("btn-sync-final-selected"),
+    finalCheckinIds: $("final-checkin-ids"),
+    btnFinalCheckinManual: $("btn-final-checkin-manual"),
     // Debug tokens
     tokenPreview: $("token-preview"),
     // Settings
@@ -1600,6 +1645,391 @@
     els.btnSyncManual.disabled = false;
   }
 
+  // ======================== FINAL CHECK-IN: LIST MISSING ========================
+
+  async function listMissingFinalCheckins() {
+    clearLog();
+    els.finalCheckinResults.style.display = "none";
+    els.btnListFinalCheckins.disabled = true;
+
+    try {
+      setStatus("Fetching transactions…", "info");
+      var transactions = await folioGetAll(
+        "/inn-reach/transactions",
+        "transactions",
+        {
+          type: "ITEM",
+          state: [
+            "ITEM_SHIPPED",
+            "ITEM_IN_TRANSIT",
+            "RETURN_UNCIRCULATED",
+            "RECALL",
+            "ITEM_RECEIVED",
+            "RECEIVE_UNANNOUNCED",
+          ],
+        }
+      );
+      addLog("Fetched " + transactions.length + " transactions.");
+
+      setStatus("Checking for transactions with closed loans…", "info");
+      var broken = [];
+
+      for (var i = 0; i < transactions.length; i++) {
+        var txn = transactions[i];
+        showProgress(i, transactions.length);
+        setStatus(
+          "Checking transaction " +
+            (i + 1) +
+            " of " +
+            transactions.length +
+            "…",
+          "info"
+        );
+
+        if (txn.state === "RECALL") {
+          addLog(
+            "Transaction " +
+              (txn.trackingId || "") +
+              " in RECALL state — will need state change to ITEM_IN_TRANSIT before sync.",
+            "warn"
+          );
+        }
+
+        var loanId = (txn.hold || {}).folioLoanId;
+        if (!loanId) continue;
+
+        try {
+          var loan = await folioGet("/loan-storage/loans/" + loanId);
+          if ((loan.status || {}).name === "Closed") {
+            broken.push({
+              trackingId: txn.trackingId || "",
+              state: txn.state || "",
+              itemId: (txn.hold || {}).folioItemId || "",
+              loanId: loanId,
+              transactionId: txn.id,
+            });
+            addLog(
+              "Closed loan found: " +
+                (txn.trackingId || "") +
+                " — Item: " +
+                ((txn.hold || {}).folioItemId || "n/a") +
+                ", Loan: " +
+                loanId +
+                ", State: " +
+                (txn.state || "n/a"),
+              "error"
+            );
+          }
+        } catch (err) {
+          addLog(
+            "Error fetching loan " +
+              loanId +
+              " for " +
+              (txn.trackingId || "") +
+              ": " +
+              err.message,
+            "error"
+          );
+        }
+      }
+
+      showProgress(transactions.length, transactions.length);
+      populateFinalCheckinTable(broken);
+      hideProgress();
+      setStatus(
+        "Found " +
+          broken.length +
+          " transaction(s) with closed loans.",
+        broken.length > 0 ? "warning" : "success"
+      );
+    } catch (err) {
+      console.error("[InnReachTools]", err);
+      setStatus(err.message, "error");
+    } finally {
+      els.btnListFinalCheckins.disabled = false;
+    }
+  }
+
+  function populateFinalCheckinTable(rows) {
+    els.finalCheckinTbody.innerHTML = "";
+    els.selectAllFinal.checked = false;
+    els.btnSyncFinalSelected.disabled = true;
+
+    if (rows.length === 0) {
+      els.finalCheckinResults.style.display = "none";
+      return;
+    }
+
+    rows.forEach(function (row) {
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td><input type="checkbox" class="final-cb" data-id="' +
+        escapeHtml(row.trackingId) +
+        '"></td>' +
+        "<td>" +
+        escapeHtml(row.trackingId) +
+        "</td>" +
+        "<td>" +
+        escapeHtml(row.state) +
+        "</td>" +
+        "<td>" +
+        escapeHtml(row.itemId) +
+        "</td>" +
+        "<td>" +
+        escapeHtml(row.loanId) +
+        "</td>" +
+        '<td class="sync-status"></td>';
+      els.finalCheckinTbody.appendChild(tr);
+    });
+
+    els.finalCheckinCount.textContent =
+      rows.length + " transaction(s) with closed loans";
+    els.finalCheckinResults.style.display = "block";
+    updateFinalSyncBtn();
+  }
+
+  function updateFinalSyncBtn() {
+    var checked = shadow.querySelectorAll(".final-cb:checked");
+    els.btnSyncFinalSelected.disabled = checked.length === 0;
+    var ids = [];
+    checked.forEach(function (cb) {
+      ids.push(cb.getAttribute("data-id"));
+    });
+    els.finalCheckinIds.value = ids.join(", ");
+  }
+
+  // ======================== FINAL CHECK-IN: SYNC ========================
+
+  async function finalCheckinSync(trackingId) {
+    addLog("--- Final check-in: " + trackingId + " ---");
+
+    var txnData = await folioGet("/inn-reach/transactions", {
+      query: trackingId,
+      limit: "10",
+    });
+    var results = txnData.transactions || [];
+
+    if (results.length !== 1) {
+      addLog(
+        "No transaction (or multiple) found for: " + trackingId,
+        "error"
+      );
+      return false;
+    }
+    var transaction = results[0];
+    addLog(
+      "Found transaction: " +
+        transaction.trackingId +
+        " (" +
+        transaction.state +
+        ")"
+    );
+
+    var validStates = [
+      "ITEM_SHIPPED",
+      "ITEM_IN_TRANSIT",
+      "RETURN_UNCIRCULATED",
+      "RECALL",
+      "ITEM_RECEIVED",
+      "RECEIVE_UNANNOUNCED",
+    ];
+    if (validStates.indexOf(transaction.state) === -1) {
+      addLog(
+        "Transaction is in " +
+          transaction.state +
+          " state — not a valid final check-in state. Skipping.",
+        "warn"
+      );
+      return false;
+    }
+
+    var loanId = (transaction.hold || {}).folioLoanId;
+    if (!loanId) {
+      addLog("Transaction has no associated loan ID. Skipping.", "warn");
+      return false;
+    }
+
+    var loan;
+    try {
+      loan = await folioGet("/loan-storage/loans/" + loanId);
+    } catch (err) {
+      addLog(
+        "Error fetching loan " + loanId + ": " + err.message,
+        "error"
+      );
+      return false;
+    }
+
+    if ((loan.status || {}).name !== "Closed") {
+      addLog(
+        "Loan " +
+          loanId +
+          " is not Closed (status: " +
+          ((loan.status || {}).name || "Unknown") +
+          "). Skipping.",
+        "warn"
+      );
+      return false;
+    }
+
+    // If RECALL state, change to ITEM_IN_TRANSIT first
+    if (transaction.state === "RECALL") {
+      addLog(
+        "Transaction in RECALL state — changing to ITEM_IN_TRANSIT as workaround…"
+      );
+      transaction.state = "ITEM_IN_TRANSIT";
+      try {
+        await folioPut(
+          "/inn-reach/transactions/" + transaction.id,
+          transaction
+        );
+        addLog("Updated transaction state to ITEM_IN_TRANSIT.");
+      } catch (err) {
+        addLog(
+          "Error updating transaction state: " + err.message,
+          "error"
+        );
+        return false;
+      }
+    }
+
+    // Touch the loan: set userId from hold.folioPatronId, PUT, then remove and PUT again
+    var patronId = (transaction.hold || {}).folioPatronId;
+    loan.userId = patronId;
+    try {
+      await folioPut("/loan-storage/loans/" + loanId, loan);
+      addLog("Touched loan " + loanId + " (set userId to " + patronId + ").");
+    } catch (err) {
+      addLog(
+        "Error touching loan " + loanId + ": " + err.message,
+        "error"
+      );
+      return false;
+    }
+
+    delete loan.userId;
+    try {
+      await folioPut("/loan-storage/loans/" + loanId, loan);
+      addLog("Restored loan " + loanId + " to original state.");
+    } catch (err) {
+      addLog(
+        "Error restoring loan " + loanId + ": " + err.message,
+        "error"
+      );
+      return false;
+    }
+
+    addLog("✓ Final check-in sync complete for " + trackingId);
+    return true;
+  }
+
+  async function syncFinalSelectedFromTable() {
+    var checked = shadow.querySelectorAll(".final-cb:checked");
+    if (checked.length === 0) return;
+
+    var ids = [];
+    checked.forEach(function (cb) {
+      ids.push(cb.getAttribute("data-id"));
+    });
+
+    if (
+      !confirm(
+        "Sync final check-in for " +
+          ids.length +
+          " transaction(s)? This will modify loan records in FOLIO."
+      )
+    ) {
+      return;
+    }
+
+    els.btnSyncFinalSelected.disabled = true;
+    clearLog();
+    setStatus("Syncing " + ids.length + " transaction(s)…", "info");
+
+    for (var i = 0; i < ids.length; i++) {
+      var trackingId = ids[i];
+      showProgress(i, ids.length);
+      setStatus(
+        "Syncing " + (i + 1) + " of " + ids.length + "…",
+        "info"
+      );
+
+      var cb = shadow.querySelector(
+        '.final-cb[data-id="' + trackingId + '"]'
+      );
+      var row = cb ? cb.closest("tr") : null;
+      var statusCell = row ? row.querySelector(".sync-status") : null;
+
+      try {
+        var ok = await finalCheckinSync(trackingId);
+        if (statusCell) {
+          statusCell.textContent = ok ? "✓ Synced" : "— Skipped";
+          statusCell.className =
+            "sync-status " + (ok ? "synced" : "pending");
+        }
+      } catch (err) {
+        addLog(
+          "Error syncing " + trackingId + ": " + err.message,
+          "error"
+        );
+        if (statusCell) {
+          statusCell.textContent = "✗ Failed";
+          statusCell.className = "sync-status failed";
+        }
+      }
+    }
+    showProgress(ids.length, ids.length);
+    setStatus("Final check-in sync complete.", "success");
+    els.btnSyncFinalSelected.disabled = false;
+  }
+
+  async function syncFinalManual() {
+    var input = (els.finalCheckinIds.value || "").trim();
+    if (!input) {
+      setStatus("Enter one or more tracking IDs.", "error");
+      return;
+    }
+
+    var ids = input
+      .split(",")
+      .map(function (s) {
+        return s.trim();
+      })
+      .filter(Boolean);
+
+    if (
+      !confirm(
+        "Sync final check-in for " +
+          ids.length +
+          " transaction(s)? This will modify loan records in FOLIO."
+      )
+    ) {
+      return;
+    }
+
+    els.btnFinalCheckinManual.disabled = true;
+    clearLog();
+
+    for (var i = 0; i < ids.length; i++) {
+      showProgress(i, ids.length);
+      setStatus(
+        "Syncing " + (i + 1) + " of " + ids.length + "…",
+        "info"
+      );
+      try {
+        await finalCheckinSync(ids[i]);
+      } catch (err) {
+        addLog(
+          "Error syncing " + ids[i] + ": " + err.message,
+          "error"
+        );
+      }
+    }
+    showProgress(ids.length, ids.length);
+    setStatus("Final check-in sync complete.", "success");
+    els.btnFinalCheckinManual.disabled = false;
+  }
+
   // ======================== INIT ========================
 
   async function init() {
@@ -1709,6 +2139,28 @@
   els.brokenTbody.addEventListener("change", function (e) {
     if (e.target.classList.contains("broken-cb")) {
       updateSyncSelectedBtn();
+    }
+  });
+
+  // Final Check-ins
+  els.btnListFinalCheckins.addEventListener("click", listMissingFinalCheckins);
+  els.btnSyncFinalSelected.addEventListener("click", syncFinalSelectedFromTable);
+  els.btnFinalCheckinManual.addEventListener("click", syncFinalManual);
+  els.finalCheckinIds.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") syncFinalManual();
+  });
+
+  // Final check-in table checkboxes
+  els.selectAllFinal.addEventListener("change", function () {
+    var cbs = shadow.querySelectorAll(".final-cb");
+    cbs.forEach(function (cb) {
+      cb.checked = els.selectAllFinal.checked;
+    });
+    updateFinalSyncBtn();
+  });
+  els.finalCheckinTbody.addEventListener("change", function (e) {
+    if (e.target.classList.contains("final-cb")) {
+      updateFinalSyncBtn();
     }
   });
 
