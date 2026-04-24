@@ -927,7 +927,7 @@
       });
 
       var fullHTML =
-        '<!DOCTYPE html><html lang="en"><head><title>Inn-Reach Paging Slips (' +
+        '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Inn-Reach Paging Slips (' +
         slips.length +
         ")</title></head><body>" +
         slips.join("\n") +
@@ -1065,7 +1065,7 @@
         "</div>";
 
       var fullHTML =
-        '<!DOCTYPE html><html lang="en"><head><title>Inn-Reach Paging Slip — ' +
+        '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Inn-Reach Paging Slip — ' +
         escapeHtml(item.barcode || match.trackingId) +
         "</title></head><body>" +
         rendered +
