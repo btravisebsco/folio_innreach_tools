@@ -1893,12 +1893,18 @@
       }
     }
 
-    // Touch the loan: set userId from hold.folioPatronId, PUT, then remove and PUT again
+    // Touch the loan: if anonymized, temporarily set userId from hold.folioPatronId
     var patronId = (transaction.hold || {}).folioPatronId;
-    loan.userId = patronId;
+    var isAnonymized = loan.userId == null;
+    if (isAnonymized) {
+      addLog(
+        "Loan " + loanId + " is anonymized, temporarily setting userId to hold patron ID to sync check-in."
+      );
+      loan.userId = patronId;
+    }
     try {
       await folioPut("/loan-storage/loans/" + loanId, loan);
-      addLog("Touched loan " + loanId + " (set userId to " + patronId + ").");
+      addLog("Touched loan " + loanId + ".");
     } catch (err) {
       addLog(
         "Error touching loan " + loanId + ": " + err.message,
@@ -1907,16 +1913,18 @@
       return false;
     }
 
-    delete loan.userId;
-    try {
-      await folioPut("/loan-storage/loans/" + loanId, loan);
-      addLog("Restored loan " + loanId + " to original state.");
-    } catch (err) {
-      addLog(
-        "Error restoring loan " + loanId + ": " + err.message,
-        "error"
-      );
-      return false;
+    if (isAnonymized) {
+      delete loan.userId;
+      try {
+        await folioPut("/loan-storage/loans/" + loanId, loan);
+        addLog("Restored loan " + loanId + " to original state.");
+      } catch (err) {
+        addLog(
+          "Error restoring loan " + loanId + ": " + err.message,
+          "error"
+        );
+        return false;
+      }
     }
 
     addLog("✓ Final check-in sync complete for " + trackingId);
