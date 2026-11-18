@@ -6,8 +6,7 @@ This is a Chrome MV3 browser extension that provides Inn-Reach tools for FOLIO (
 
 1. **Paging Slips** — Generate and print Inn-Reach paging slips for items awaiting retrieval.
 2. **Fix Broken Holds** — Scan for and repair Inn-Reach ITEM_HOLD/TRANSFER transactions that have lost sync with FOLIO requests/loans.
-
-Based on Python scripts ([print_paging_slips.py](../print_paging_slips.py) and [fix_broken_item_hold_loans.py](../fix_broken_item_hold_loans.py)), ported to a browser extension with GitHub Copilot (Claude Opus 4.6).
+3. **Stuck In Transit (Patron Holds)** — Find PATRON transactions stuck in ITEM_IN_TRANSIT and send a D2IR final check-in (with dry-run mode).
 
 ## Architecture
 
