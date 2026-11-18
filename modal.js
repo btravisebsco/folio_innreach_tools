@@ -55,6 +55,7 @@
     '    <div class="tab-bar">' +
     '      <button class="tab-btn active" data-tab="slips">Paging Slips</button>' +
     '      <button class="tab-btn" data-tab="fix">Fix Broken Item Holds</button>' +
+    '      <button class="tab-btn" data-tab="transit">Stuck In Transit (Patron Holds)</button>' +
     '      <button class="tab-btn" data-tab="settings">Settings</button>' +
     "    </div>" +
     '    <div class="modal-body">' +
@@ -163,6 +164,47 @@
     "          </div>" +
     "        </div>" +
     "      </div>" +
+    // ---- Stuck In Transit Tab ----
+    '      <div class="tab-content" id="tab-transit">' +
+    '        <div class="warning-box">' +
+    "          <strong>⚠ LAST RESORT — USE WITH EXTREME CAUTION</strong>" +
+    "          FOLIO is <u>not</u> the source of truth for patron hold final check-ins. The owning library and the central server are. " +
+    "          This tool should only be used when the owning site never sent the final check-in message, or the central server failed to pass it to FOLIO." +
+    "          <ul>" +
+    "            <li>Final check-in <strong>terminates</strong> the transaction (FINAL_CHECKIN). It cannot be undone from this tool.</li>" +
+    "            <li>If the item is genuinely still in transit, or the owning site has not received it back, the central server and owning site records will be out of sync with FOLIO.</li>" +
+    "            <li>Confirm with the owning library (or the central server) that the item was actually returned before sending.</li>" +
+    "            <li>Always run a <strong>dry run</strong> first and review the log.</li>" +
+    "          </ul>" +
+    "        </div>" +
+    '        <div class="section">' +
+    "          <p>Scan for PATRON transactions stuck in ITEM_IN_TRANSIT and send a D2IR final check-in for them.</p>" +
+    '          <div class="btn-row">' +
+    '            <button class="btn primary" id="btn-list-transit">Scan for Stuck Transactions</button>' +
+    "          </div>" +
+    "        </div>" +
+    '        <div id="transit-results" style="display:none;">' +
+    '          <div class="table-toolbar">' +
+    '            <span id="transit-count"></span>' +
+    '            <label><input type="checkbox" id="transit-dry-run" checked> Dry run (log only)</label>' +
+    '            <button class="btn danger" id="btn-transit-selected" disabled>Final Check-in Selected</button>' +
+    "          </div>" +
+    '          <div class="table-wrap">' +
+    '            <table id="transit-table">' +
+    "              <thead><tr>" +
+    '                <th><input type="checkbox" id="select-all-transit"></th>' +
+    "                <th>Tracking ID</th>" +
+    "                <th>Central Server</th>" +
+    "                <th>Item Barcode</th>" +
+    "                <th>Patron Barcode</th>" +
+    "                <th>Title</th>" +
+    "                <th>Status</th>" +
+    "              </tr></thead>" +
+    '              <tbody id="transit-tbody"></tbody>' +
+    "            </table>" +
+    "          </div>" +
+    "        </div>" +
+    "      </div>" +
     // ---- Settings Tab ----
     '      <div class="tab-content" id="tab-settings">' +
     '        <div class="setting-group">' +
@@ -229,6 +271,14 @@
     btnSyncFinalSelected: $("btn-sync-final-selected"),
     finalCheckinIds: $("final-checkin-ids"),
     btnFinalCheckinManual: $("btn-final-checkin-manual"),
+    // Stuck In Transit
+    btnListTransit: $("btn-list-transit"),
+    transitResults: $("transit-results"),
+    transitCount: $("transit-count"),
+    transitTbody: $("transit-tbody"),
+    transitDryRun: $("transit-dry-run"),
+    selectAllTransit: $("select-all-transit"),
+    btnTransitSelected: $("btn-transit-selected"),
     // Debug tokens
     tokenPreview: $("token-preview"),
     // Settings
@@ -365,12 +415,13 @@
     });
   }
 
-  async function folioFetch(method, path, body, params) {
+  async function folioFetch(method, path, body, params, headers) {
     var result = await _sendBg({
       type: "irtools_apiFetch",
       method: method,
       path: path,
       params: params || null,
+      headers: headers || null,
       body: body,
       sessionUrl: session.url,
       sessionTenant: session.tenant,
@@ -425,8 +476,8 @@
     return folioFetch("POST", path, body);
   }
 
-  function folioPut(path, body) {
-    return folioFetch("PUT", path, body);
+  function folioPut(path, body, headers) {
+    return folioFetch("PUT", path, body, null, headers);
   }
 
   // ======================== JWT DECODE ========================
@@ -2038,6 +2089,280 @@
     els.btnFinalCheckinManual.disabled = false;
   }
 
+  // ======================== STUCK IN TRANSIT ========================
+
+  var transitTxnMap = {};
+  var cachedCentralServers = null;
+
+  async function listStuckInTransit() {
+    clearLog();
+    els.transitResults.style.display = "none";
+    els.btnListTransit.disabled = true;
+
+    try {
+      setStatus("Fetching transactions…", "info");
+      var transactions = await folioGetAll(
+        "/inn-reach/transactions",
+        "transactions",
+        { type: "PATRON", state: ["ITEM_IN_TRANSIT"] }
+      );
+      transitTxnMap = {};
+      transactions.forEach(function (t) {
+        transitTxnMap[t.trackingId] = t;
+      });
+      populateTransitTable(transactions);
+      setStatus(
+        "Found " + transactions.length + " stuck transaction(s).",
+        transactions.length > 0 ? "warning" : "success"
+      );
+    } catch (err) {
+      console.error("[InnReachTools]", err);
+      setStatus(err.message, "error");
+    } finally {
+      els.btnListTransit.disabled = false;
+    }
+  }
+
+  function populateTransitTable(rows) {
+    els.transitTbody.innerHTML = "";
+    els.selectAllTransit.checked = false;
+    els.btnTransitSelected.disabled = true;
+
+    if (rows.length === 0) {
+      els.transitResults.style.display = "none";
+      return;
+    }
+
+    rows.forEach(function (txn) {
+      var hold = txn.hold || {};
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td><input type="checkbox" class="transit-cb" data-id="' +
+        escapeHtml(txn.trackingId) +
+        '"></td>' +
+        "<td>" +
+        escapeHtml(txn.trackingId) +
+        "</td>" +
+        "<td>" +
+        escapeHtml(txn.centralServerCode || "") +
+        "</td>" +
+        "<td>" +
+        escapeHtml(hold.folioItemBarcode || "") +
+        "</td>" +
+        "<td>" +
+        escapeHtml(hold.folioPatronBarcode || "") +
+        "</td>" +
+        "<td>" +
+        escapeHtml(hold.title || "") +
+        "</td>" +
+        '<td class="sync-status"></td>';
+      els.transitTbody.appendChild(tr);
+    });
+
+    els.transitCount.textContent = rows.length + " stuck transaction(s)";
+    els.transitResults.style.display = "block";
+    updateTransitBtn();
+  }
+
+  function updateTransitBtn() {
+    var checked = shadow.querySelectorAll(".transit-cb:checked");
+    els.btnTransitSelected.disabled = checked.length === 0;
+  }
+
+  // RFC4648 base32, lowercase alphabet, no padding, of the 16 UUID bytes.
+  function base32PatronId(uuid) {
+    var hex = String(uuid || "").replace(/-/g, "");
+    if (!/^[0-9a-fA-F]{32}$/.test(hex)) return null;
+    var alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+    var out = "";
+    var buffer = 0;
+    var bits = 0;
+    for (var i = 0; i < 16; i++) {
+      buffer = (buffer << 8) | parseInt(hex.substr(i * 2, 2), 16);
+      bits += 8;
+      while (bits >= 5) {
+        out += alphabet.charAt((buffer >>> (bits - 5)) & 31);
+        bits -= 5;
+      }
+      buffer &= (1 << bits) - 1;
+    }
+    if (bits > 0) {
+      out += alphabet.charAt((buffer << (5 - bits)) & 31);
+    }
+    return out;
+  }
+
+  // Returns { code, localCode } for the transaction's central server.
+  async function getCentralInfoForTxn(txn) {
+    if (!cachedCentralServers) {
+      var data = await folioGet("/inn-reach/central-servers", {
+        limit: "100",
+      });
+      cachedCentralServers = data.centralServers || [];
+    }
+    // Match by id first, then by central server code.
+    var cs = null;
+    cachedCentralServers.forEach(function (c) {
+      if (!cs && txn.centralServerId && c.id === txn.centralServerId) cs = c;
+    });
+    cachedCentralServers.forEach(function (c) {
+      if (!cs && txn.centralServerCode && c.centralServerCode === txn.centralServerCode) cs = c;
+    });
+    if (!cs) {
+      addLog(
+        "No central server record matched txn (centralServerId=" +
+          txn.centralServerId + ", centralServerCode=" + txn.centralServerCode +
+          "). Known: " +
+          cachedCentralServers.map(function (c) { return c.id + "/" + c.centralServerCode; }).join(", "),
+        "warn"
+      );
+      cs = {};
+    } else if (!cs.localServerCode) {
+      addLog(
+        "Central server record has no localServerCode. Fields: " + Object.keys(cs).join(", "),
+        "warn"
+      );
+    }
+    return {
+      code: txn.centralServerCode || cs.centralServerCode || "",
+      localCode: cs.localServerCode || "",
+    };
+  }
+
+  async function transitFinalCheckin(trackingId, dryRun) {
+    var txn = transitTxnMap[trackingId];
+    if (!txn) {
+      addLog("Transaction " + trackingId + " not found in scan results.", "error");
+      return false;
+    }
+    var hold = txn.hold || {};
+    var central = await getCentralInfoForTxn(txn);
+    var centralCode = central.code;
+    var body = {
+      transactionTime: Math.floor(Date.now() / 1000),
+      patronId: base32PatronId(hold.folioPatronId),
+      patronAgencyCode: hold.patronAgencyCode,
+      itemAgencyCode: hold.itemAgencyCode,
+      itemId: hold.itemId,
+    };
+
+    var missing = [];
+    if (!centralCode) missing.push("centralCode");
+    if (!central.localCode) missing.push("localServerCode");
+    Object.keys(body).forEach(function (k) {
+      if (body[k] == null || body[k] === "") missing.push(k);
+    });
+    if (missing.length > 0) {
+      addLog(
+        "Skipping " + trackingId + ": missing " + missing.join(", "),
+        "error"
+      );
+      return false;
+    }
+
+    var path =
+      "/inn-reach/d2ir/circ/finalcheckin/" +
+      encodeURIComponent(trackingId) +
+      "/" +
+      encodeURIComponent(centralCode);
+
+    // Headers the d2ir API requires, mimicking a central server message.
+    var headers = {
+      "X-To-Code": central.localCode,
+      "X-From-Code": centralCode,
+      "X-Request-Creation-Time": String(body.transactionTime),
+      // mod-inn-reach only requires this header to be present; the real
+      // d2ir auth is performed upstream of the module, not by it.
+      "X-D2IR-Authorization": "folio-innreach-tools",
+      "Accept": "application/json",
+      "Content-Type": "application/json",
+    };
+
+    if (dryRun) {
+      addLog(
+        "[dry run] PUT " + path + " headers=" + JSON.stringify(headers) +
+          " " + JSON.stringify(body)
+      );
+      return true;
+    }
+
+    await folioPut(path, body, headers);
+    addLog("Final check-in sent for " + trackingId + ".");
+    return true;
+  }
+
+  async function transitSelected() {
+    var checked = shadow.querySelectorAll(".transit-cb:checked");
+    if (checked.length === 0) return;
+
+    var ids = [];
+    checked.forEach(function (cb) {
+      ids.push(cb.getAttribute("data-id"));
+    });
+    var dryRun = els.transitDryRun.checked;
+
+    if (
+      !dryRun &&
+      !confirm(
+        "⚠ LAST RESORT ⚠\n\n" +
+          "FOLIO is NOT the source of truth for patron hold final check-ins.\n\n" +
+          "You are about to apply a simulated central server final check-in message (D2IR) in FOLIO for " +
+          ids.length +
+          " transaction(s). This TERMINATES the transactions (FINAL_CHECKIN) and cannot be undone from this tool.\n\n" +
+          "Only continue if you have confirmed that the owning site or central server failed to send/pass the final check-in, and the item was actually returned.\n\nProceed?"
+      )
+    ) {
+      return;
+    }
+
+    if (
+      !dryRun &&
+      !confirm(
+        "FINAL CONFIRMATION: apply " + ids.length + " live final check-in(s) to FOLIO now?"
+      )
+    ) {
+      return;
+    }
+
+    els.btnTransitSelected.disabled = true;
+    clearLog();
+    setStatus("Processing " + ids.length + " transaction(s)…", "info");
+
+    for (var i = 0; i < ids.length; i++) {
+      var trackingId = ids[i];
+      showProgress(i, ids.length);
+      setStatus("Processing " + (i + 1) + " of " + ids.length + "…", "info");
+
+      var cb = shadow.querySelector('.transit-cb[data-id="' + trackingId + '"]');
+      var row = cb ? cb.closest("tr") : null;
+      var statusCell = row ? row.querySelector(".sync-status") : null;
+
+      try {
+        var ok = await transitFinalCheckin(trackingId, dryRun);
+        if (statusCell) {
+          statusCell.textContent = ok
+            ? dryRun
+              ? "✓ Dry run"
+              : "✓ Sent"
+            : "— Skipped";
+          statusCell.className = "sync-status " + (ok ? "synced" : "pending");
+        }
+      } catch (err) {
+        addLog("Error on " + trackingId + ": " + err.message, "error");
+        if (statusCell) {
+          statusCell.textContent = "✗ Failed";
+          statusCell.className = "sync-status failed";
+        }
+      }
+    }
+    showProgress(ids.length, ids.length);
+    setStatus(
+      dryRun ? "Dry run complete." : "Final check-in complete.",
+      "success"
+    );
+    updateTransitBtn();
+  }
+
   // ======================== INIT ========================
 
   async function init() {
@@ -2170,6 +2495,19 @@
     if (e.target.classList.contains("final-cb")) {
       updateFinalSyncBtn();
     }
+  });
+
+  // Stuck In Transit
+  els.btnListTransit.addEventListener("click", listStuckInTransit);
+  els.btnTransitSelected.addEventListener("click", transitSelected);
+  els.selectAllTransit.addEventListener("change", function () {
+    shadow.querySelectorAll(".transit-cb").forEach(function (cb) {
+      cb.checked = els.selectAllTransit.checked;
+    });
+    updateTransitBtn();
+  });
+  els.transitTbody.addEventListener("change", function (e) {
+    if (e.target.classList.contains("transit-cb")) updateTransitBtn();
   });
 
   // Log toggle

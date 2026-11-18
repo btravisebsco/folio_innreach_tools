@@ -402,3 +402,23 @@ td.sync-status.failed {
 td.sync-status.pending {
   color: #856404;
 }
+
+.warning-box {
+  border: 2px solid #c5221f;
+  background: #fce8e6;
+  color: #7a1411;
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.warning-box > strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+.warning-box ul {
+  margin: 6px 0 0 18px;
+  padding: 0;
+}

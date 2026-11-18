@@ -132,6 +132,11 @@ async function handleApiFetch(msg) {
   if (token) {
     headers["x-okapi-token"] = token;
   }
+  if (msg.headers) {
+    Object.keys(msg.headers).forEach(function (h) {
+      headers[h] = msg.headers[h];
+    });
+  }
 
   var opts = {
     method: method,

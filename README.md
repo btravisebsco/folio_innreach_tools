@@ -21,7 +21,7 @@ To apply changes after editing files, click the reload icon on the extension car
 
 ## Usage
 
-Click the extension icon while on any FOLIO page. An in-page modal overlay opens with three tabs.
+Click the extension icon while on any FOLIO page. An in-page modal overlay opens with four tabs.
 
 ### Paging Slips
 
@@ -70,6 +70,10 @@ Below the broken-hold scanner is a second section for detecting transactions tha
 3. "Touches" the loan record — sets `userId` to the hold patron, PUTs the loan, then removes `userId` and PUTs again. This write triggers FOLIO's internal event pipeline, which advances the Inn-Reach transaction to FINAL_CHECKIN.
 
 A confirmation dialog appears before any sync operation. Each row's status updates to show success (✓ Synced), skipped (— Skipped), or failed (✗ Failed).
+
+### Stuck In Transit
+
+Click **Scan for Stuck Transactions** to list PATRON transactions in `ITEM_IN_TRANSIT` state. Select rows and click **Final Check-in Selected** to send a D2IR final check-in (`PUT /inn-reach/d2ir/circ/finalcheckin/{trackingId}/{centralCode}`), which moves the transaction to `FINAL_CHECKIN`. **Dry run (log only)** is checked by default and only logs the request that would be sent.
 
 ### Settings
 
